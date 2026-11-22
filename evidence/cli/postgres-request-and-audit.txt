@@ -1,30 +1,30 @@
-$ psql -c "SELECT ... FROM poc.request WHERE request_id = 1011"
+$ psql -U postgres -d poc -c "SELECT request_id, client_id, external_ref, status, outcome FROM poc.request WHERE request_id = 1025;"
  request_id | client_id | external_ref |  status   |         outcome          
 ------------+-----------+--------------+-----------+--------------------------
-       1011 |         1 | DEMO-9e384d  | completed | slot moved and confirmed
+       1025 |         1 | DEMO-62fbba  | completed | slot moved and confirmed
 (1 row)
 
-$ psql -c "SELECT ... FROM poc.request_event WHERE request_id = 1011"
+$ psql -U postgres -d poc -c "SELECT event_id, from_status, to_status, poc.handle_of(actor_id) AS actor, to_char(occurred_at, 'HH24:MI:SS.MS') AS at FROM poc.request_event WHERE request_id = 1025 ORDER BY event_id;"
  event_id | from_status | to_status |  actor  |      at      
 ----------+-------------+-----------+---------+--------------
-     2255 |             | open      | staff-a | 15:18:20.543
-     2257 | open        | in_review | staff-a | 15:18:20.949
-     2258 | in_review   | approved  | staff-b | 15:18:21.053
-     2259 | approved    | completed | staff-a | 15:18:21.085
+     2299 |             | open      | staff-a | 16:21:40.324
+     2301 | open        | in_review | staff-a | 16:21:40.693
+     2302 | in_review   | approved  | staff-b | 16:21:40.795
+     2303 | approved    | completed | staff-a | 16:21:40.822
 (4 rows)
 
-$ psql -c "SELECT ... FROM poc.audit_event WHERE object_ref LIKE 'request:1011%'"
- audit_id | actor_role |  action  |             object_ref              |      prev_hash      
-----------+------------+----------+-------------------------------------+---------------------
-     3179 | staff      | create   | request:1011                        | b17f864a58e69a05...
-     3181 | staff      | draft    | request:1011/draft:DR-001011-12067d | e8eaaf12340469f6...
-     3182 | staff      | review   | request:1011/draft:DR-001011-12067d | dc2fd37812413a78...
-     3183 | staff      | complete | request:1011                        | e72993b64574a5a0...
+$ psql -U postgres -d poc -c "SELECT audit_id, actor_role, action, object_ref, left(prev_hash, 16) AS prev_hash_start FROM poc.audit_event WHERE object_ref LIKE 'request:1025%' ORDER BY audit_id;"
+ audit_id | actor_role |  action  |             object_ref              | prev_hash_start  
+----------+------------+----------+-------------------------------------+------------------
+     3221 | staff      | create   | request:1025                        | 59e4f9cb1ce1929d
+     3223 | staff      | draft    | request:1025/draft:DR-001025-e5330b | 358c7f9ac3a09f70
+     3224 | staff      | review   | request:1025/draft:DR-001025-e5330b | ecf20c3ed8acaf9c
+     3225 | staff      | complete | request:1025                        | f3d1a7fb258bb367
 (4 rows)
 
-$ psql -c "SELECT * FROM poc.audit_verify()"
+$ psql -U postgres -d poc -c "SELECT * FROM poc.audit_verify();"
  ok | checked | first_bad 
 ----+---------+-----------
- t  |    3184 |          
+ t  |    3226 |          
 (1 row)
 

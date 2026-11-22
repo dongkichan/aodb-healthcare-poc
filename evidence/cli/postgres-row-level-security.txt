@@ -1,12 +1,14 @@
-$ psql -U postgres   (superuser: bypasses row-level security)
+$ psql -U postgres -d poc -c "SELECT c.name_code AS client, count(*) AS requests FROM poc.request r JOIN poc.client c USING (client_id) GROUP BY 1 ORDER BY 1;"
  client | requests 
 --------+----------
- CL-01  |      994
+ CL-01  |     1006
  CL-02  |        6
- CL-03  |       10
+ CL-03  |       12
 (3 rows)
 
-$ psql -U app_rw     (the API login), signed in as staff-b (assigned CL-01 only)
+$ psql -U app_rw -d poc   # the API login; staff-b is assigned CL-01 only
+BEGIN; SELECT set_config('app.user_id', '<staff-b user ID>', true) IS NOT NULL AS user_set;
+SELECT c.name_code AS client, count(*) AS requests FROM request r JOIN client c USING (client_id) GROUP BY 1 ORDER BY 1; COMMIT;
 BEGIN
  user_set 
 ----------
@@ -15,15 +17,15 @@ BEGIN
 
  client | requests 
 --------+----------
- CL-01  |      994
+ CL-01  |     1006
 (1 row)
 
 COMMIT
-$ psql -U app_rw     (no user set)
+$ psql -U app_rw -d poc -c "SELECT count(*) AS requests_visible FROM request;"   # no user set
  requests_visible 
 ------------------
                 0
 (1 row)
 
-$ psql -U app_rw -c "DELETE FROM audit_event"
+$ psql -U app_rw -d poc -c "DELETE FROM audit_event;"
 ERROR:  permission denied for table audit_event

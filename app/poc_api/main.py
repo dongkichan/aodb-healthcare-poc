@@ -3,6 +3,7 @@
 Every call passes the gateway checks in security.py. Every PostgreSQL statement runs inside
 user_tx(), so row-level security sees the signed-in staff member. Synthetic data only.
 """
+import datetime
 import os
 import time
 import uuid
@@ -145,32 +146,42 @@ def create_request(body: NewRequest, user: User = Depends(current_user)):
     doc = {"_id": wp_id, "request_id": rid, "client_code": body.client, "workflow": body.workflow,
            "fields": body.fields, "missing_fields": missing, "guidance_refs": [], "version": 1,
            "status": "held" if missing else "in_progress"}
+    # Idempotent upsert: a retry, or a stub the worker created first, never loses the field values.
+    # This write comes after the PostgreSQL commit, so it is not atomic with it; if it still fails,
+    # the worker's request.created handler leaves an empty package that staff must complete.
+    written = False
     for attempt in range(3):
         try:
-            mongo_db().work_packages.insert_one(doc)
-            break
-        except DuplicateKeyError:
+            fields_doc = {k: v for k, v in doc.items() if k != "_id"}
+            mongo_db().work_packages.update_one({"_id": wp_id}, {"$set": fields_doc}, upsert=True)
+            written = True
             break
         except PyMongoError:
-            if attempt == 2:
-                raise
             time.sleep(0.2)
     timings["mongodb"] = ms(t0)
     return {"request_id": rid, "status": status, "required_fields": required, "missing_fields": missing,
-            "work_package_id": wp_id, "timings_ms": timings}
+            "work_package_id": wp_id, "work_package_written": written, "timings_ms": timings}
+
+
+STATUSES = ("held", "open", "in_review", "approved", "completed")
 
 
 @app.get("/requests")
 def list_requests(client: str, status: Optional[str] = None, user: User = Depends(current_user)):
     require_role(user, "staff", "team_lead", "client_coordinator", "manager", "dpo")
     require_client(user, client)
+    if status is not None and status not in STATUSES:
+        raise HTTPException(422, f"status must be one of {STATUSES}")
     with user_tx(user.user_id) as conn:
         rows = conn.execute(
             "SELECT r.request_id, c.name_code, w.name, r.external_ref, r.summary, r.status, r.due_at "
             "FROM request r JOIN client c USING (client_id) JOIN workflow_type w USING (workflow_type_id) "
             "WHERE c.name_code = %s AND (%s::text IS NULL OR r.status = %s) ORDER BY r.due_at LIMIT 100",
             [client, status, status]).fetchall()
-        client_id = conn.execute("SELECT client_id FROM client WHERE name_code = %s", [client]).fetchone()[0]
+        row = conn.execute("SELECT client_id FROM client WHERE name_code = %s", [client]).fetchone()
+        if row is None:  # assignment removed since the session was created
+            raise HTTPException(403, f"client {client} is no longer assigned to {user.handle}")
+        client_id = row[0]
         # Client references and summaries are Restricted, so the read itself is logged.
         write_audit(conn, user, client_id, "read_restricted", f"requests?client={client}&status={status or 'any'}")
     return {"client": client, "requests": [
@@ -206,9 +217,11 @@ def run_search(conn, rid: int, mode: str = "default", k: int = 5) -> dict:
     if mode in ("default", "hnsw_iterative"):
         conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
     rows = conn.execute(
-        "SELECT section_id, guidance_id, version, workflow_type, embedding <=> %s AS distance FROM guidance_chunk "
-        "WHERE client_id = %s AND workflow_type = %s ORDER BY embedding <=> %s LIMIT %s",
+        "SELECT section_id, guidance_id, version, workflow_type, embedding <=> %s AS distance, client_id "
+        "FROM guidance_chunk WHERE client_id = %s AND workflow_type = %s ORDER BY embedding <=> %s LIMIT %s",
         [vec, client_id, workflow, vec, k]).fetchall()
+    # Label each passage with its own client, read from the passage row, not from the request.
+    codes = dict(conn.execute("SELECT client_id, name_code FROM client").fetchall())
     timings["pgvector"] = ms(t0)
     sids = [r[0] for r in rows]
 
@@ -240,7 +253,7 @@ def run_search(conn, rid: int, mode: str = "default", k: int = 5) -> dict:
 
     return {
         "request_id": rid, "client": code, "workflow": workflow, "status": status, "mode": mode,
-        "results": [{"section_id": r[0], "guidance_id": r[1], "version": r[2], "client": code, "workflow": r[3],
+        "results": [{"section_id": r[0], "guidance_id": r[1], "version": r[2], "client": codes.get(r[5]), "workflow": r[3],
                      "distance": round(float(r[4]), 4), "text": texts.get(r[0])} for r in rows],
         "graph": {"required_fields": sorted(g["fields"]), "roles": sorted(g["roles"]),
                   "referenced_sections": referenced,
@@ -268,9 +281,13 @@ def create_draft(rid: int, user: User = Depends(current_user)):
     the approved AI environment is not available to the prototype."""
     require_role(user, "staff")
     with user_tx(user.user_id) as conn:
+        # Lock the request first, so two concurrent drafts cannot both move it to review.
+        locked = conn.execute("SELECT status FROM request WHERE request_id = %s FOR UPDATE", [rid]).fetchone()
+        if locked is None:
+            raise HTTPException(404, "request not found")
+        if locked[0] != "open":
+            raise HTTPException(409, f"request is {locked[0]}; only open requests can be drafted")
         found = run_search(conn, rid)
-        if found["status"] != "open":
-            raise HTTPException(409, f"request is {found['status']}; only open requests can be drafted")
         used = found["results"][:3]
         if not used:
             raise HTTPException(422, "a draft must cite at least one approved guidance passage")
@@ -279,13 +296,16 @@ def create_draft(rid: int, user: User = Depends(current_user)):
         sources = [{"section_id": p["section_id"], "version": p["version"]} for p in used]
         text = "Proposed note, assembled from approved guidance:\n" + "\n".join(
             f"- {p['text']} [{p['section_id']} v{p['version']}]" for p in used)
+        # Write the draft before the audit insert, so the audit chain's head lock is not held
+        # while MongoDB confirms a majority write. If the commit then fails, the draft is left
+        # behind as "proposed" for a request that is still open; review refuses it (below).
+        mongo_db().drafts.insert_one({"_id": draft_id, "request_id": rid, "client_code": found["client"],
+                                      "prepared_by": user.user_id, "sources": sources, "text": text,
+                                      "status": "proposed", "created_at": datetime.datetime.now(datetime.timezone.utc)})
         conn.execute("UPDATE request SET status = 'in_review' WHERE request_id = %s", [rid])
         write_status(conn, rid, client_id, "open", "in_review", user)
         write_audit(conn, user, client_id, "draft", f"request:{rid}/draft:{draft_id}", ["status"])
         write_outbox(conn, rid, "request.in_review")
-        mongo_db().drafts.insert_one({"_id": draft_id, "request_id": rid, "client_code": found["client"],
-                                      "prepared_by": user.user_id, "sources": sources, "text": text,
-                                      "status": "proposed"})
     return {"draft_id": draft_id, "request_id": rid, "sources": sources, "text": text}
 
 
@@ -303,6 +323,9 @@ def review_draft(draft_id: str, body: Review, user: User = Depends(current_user)
     if draft["prepared_by"] == user.user_id:
         raise HTTPException(403, "the reviewer must not be the person who prepared the draft")
     rid = draft["request_id"]
+    latest = mongo_db().drafts.find_one({"request_id": rid}, sort=[("created_at", -1)])
+    if draft.get("status") != "proposed" or latest is None or latest["_id"] != draft_id:
+        raise HTTPException(409, "only the request's latest proposed draft can be reviewed")
     with user_tx(user.user_id) as conn:
         row = conn.execute("SELECT client_id, status FROM request WHERE request_id = %s FOR UPDATE", [rid]).fetchone()
         if row is None:
@@ -351,8 +374,12 @@ def complete_request(rid: int, body: Completion, user: User = Depends(current_us
                             "ORDER BY decided_at DESC, decision_id DESC LIMIT 1", [rid]).fetchone()
         if last is None or last[0] != "accepted":
             raise HTTPException(409, "completion needs an accepted review decision")
-        conn.execute("INSERT INTO client_action (request_id, client_id, idempotency_key, channel, status) "
-                     "VALUES (%s, %s, %s, %s, 'done')", [rid, client_id, body.idempotency_key, body.channel])
+        try:
+            with conn.transaction():  # savepoint: a key used on another client's request is invisible here
+                conn.execute("INSERT INTO client_action (request_id, client_id, idempotency_key, channel, status) "
+                             "VALUES (%s, %s, %s, %s, 'done')", [rid, client_id, body.idempotency_key, body.channel])
+        except psycopg.errors.UniqueViolation:
+            raise HTTPException(409, "idempotency key already used for another request")
         conn.execute("UPDATE request SET status = 'completed', outcome = %s WHERE request_id = %s", [body.outcome, rid])
         write_status(conn, rid, client_id, "approved", "completed", user)
         write_audit(conn, user, client_id, "complete", f"request:{rid}", ["status", "outcome"])

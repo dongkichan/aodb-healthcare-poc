@@ -4,7 +4,15 @@ The relay moves committed outbox rows to the Redis stream and marks them publish
 at least once: if the relay stops between the XADD and its commit, the rows are published again,
 and the idempotent projections absorb the duplicates. Each projection reads the stream through
 its own consumer group and acknowledges an entry only after applying it.
+
+Robustness:
+- every thread writes its own heartbeat; the container health check requires all four;
+- an entry that fails 5 times is parked in dead:<group> and acknowledged, so one bad entry cannot
+  stop a projection;
+- a consumer pauses while pause:<group> is set (used by the Neo4j rebuild);
+- the stream is not trimmed: trimming by length could drop entries a slow group has not read.
 """
+import json
 import os
 import threading
 import time
@@ -17,12 +25,27 @@ from .projections import PROJECTIONS, decode, rds
 
 STREAM = "poc:events"
 POLL_SECONDS = 0.05
+MAX_ATTEMPTS = 5
+THREADS = ("relay",) + tuple(PROJECTIONS)
+
+
+def beat(name: str, last: list) -> None:
+    """Heartbeat every 2 s per thread; a Redis hiccup must not kill the thread."""
+    now = time.time()
+    if now - last[0] >= 2:
+        try:
+            rds().set(f"worker:alive:{name}", str(now), ex=15)
+            last[0] = now
+        except redis.RedisError:
+            pass
 
 
 def relay(stop: threading.Event) -> None:
     r = rds()
     conn = psycopg.connect(os.environ["PG_WORKER_DSN"])
+    last = [0.0]
     while not stop.is_set():
+        beat("relay", last)
         with conn.transaction():
             rows = conn.execute(
                 "SELECT outbox_id, event_type, payload::text, extract(epoch FROM created_at) FROM outbox_event "
@@ -30,8 +53,7 @@ def relay(stop: threading.Event) -> None:
             if rows:
                 pipe = r.pipeline(transaction=False)
                 for oid, etype, payload, created in rows:
-                    pipe.xadd(STREAM, {"outbox_id": oid, "type": etype, "payload": payload, "created": f"{created:.6f}"},
-                              maxlen=200000, approximate=True)
+                    pipe.xadd(STREAM, {"outbox_id": oid, "type": etype, "payload": payload, "created": f"{created:.6f}"})
                 pipe.execute()
                 conn.execute("UPDATE outbox_event SET published_at = clock_timestamp() WHERE outbox_id = ANY(%s)",
                              [[row[0] for row in rows]])
@@ -47,12 +69,46 @@ def ensure_group(r: redis.Redis, group: str) -> None:
             raise
 
 
+def handle(r: redis.Redis, group: str, apply, msg_id: str, fields: dict) -> bool:
+    """Applies one entry. Returns False if it failed and should be retried later."""
+    try:
+        oid, payload = decode(fields)
+        applied = apply(oid, payload)
+        lag_ms = (time.time() - float(fields["created"])) * 1000
+    except Exception as exc:  # noqa: BLE001 - any failure counts toward parking the entry
+        attempts = r.hincrby(f"fail:{group}", msg_id, 1)
+        print(f"{group}: entry {msg_id} failed (attempt {attempts}): {exc!r}", flush=True)
+        if attempts < MAX_ATTEMPTS:
+            return False
+        r.lpush(f"dead:{group}", json.dumps({"id": msg_id, "fields": fields, "error": repr(exc)}))
+        r.hdel(f"fail:{group}", msg_id)
+        r.xack(STREAM, group, msg_id)
+        return True
+    pipe = r.pipeline(transaction=False)
+    pipe.lpush(f"metrics:lag:{group}", f"{lag_ms:.2f}")
+    pipe.ltrim(f"metrics:lag:{group}", 0, 49999)
+    if applied is False:
+        pipe.incr(f"metrics:skipped:{group}")
+    elif applied is None:
+        pipe.incr(f"metrics:missing:{group}")
+    pipe.hdel(f"fail:{group}", msg_id)
+    pipe.xack(STREAM, group, msg_id)
+    pipe.execute()
+    return True
+
+
 def consume(group: str, stop: threading.Event) -> None:
     r = rds()
     apply = PROJECTIONS[group]
     ensure_group(r, group)
     start = "0"  # first re-read this consumer's unacknowledged entries, then new ones
+    last = [0.0]
     while not stop.is_set():
+        beat(group, last)
+        if r.exists(f"pause:{group}"):
+            r.set(f"paused:{group}", "1", ex=5)
+            time.sleep(0.2)
+            continue
         try:
             resp = r.xreadgroup(group, f"{group}-1", {STREAM: start}, count=100, block=1000)
         except redis.ResponseError as e:
@@ -66,16 +122,10 @@ def consume(group: str, stop: threading.Event) -> None:
             start = ">"
             continue
         for msg_id, fields in entries:
-            oid, payload = decode(fields)
-            applied = apply(oid, payload)
-            lag_ms = (time.time() - float(fields["created"])) * 1000
-            pipe = r.pipeline(transaction=False)
-            pipe.lpush(f"metrics:lag:{group}", f"{lag_ms:.2f}")
-            pipe.ltrim(f"metrics:lag:{group}", 0, 49999)
-            if not applied:
-                pipe.incr(f"metrics:skipped:{group}")
-            pipe.xack(STREAM, group, msg_id)
-            pipe.execute()
+            if not handle(r, group, apply, msg_id, fields):
+                start = "0"   # retry the pending entry on the next pass
+                time.sleep(1)
+                break
 
 
 def supervise(name, target, *args) -> threading.Thread:
@@ -99,8 +149,7 @@ def main() -> None:
         supervise(group, consume, group, stop)
     print("worker started: relay + " + ", ".join(PROJECTIONS), flush=True)
     while True:
-        rds().set("worker:heartbeat", str(time.time()), ex=10)
-        time.sleep(2)
+        time.sleep(5)
 
 
 if __name__ == "__main__":

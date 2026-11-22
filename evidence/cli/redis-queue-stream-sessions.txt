@@ -1,19 +1,19 @@
-$ redis-cli HGETALL req:1011:status
+$ redis-cli HGETALL req:1025:status
 oid
-2257
+2301
 status
 completed
 $ redis-cli ZRANGE queue:CL-01:appointment_change 0 4 WITHSCORES
 1
-1795446748.384765
+1795450452.637567
 2
-1795446749.975331
+1795450453.546353
 3
-1795446750.092221
+1795450453.649907
 4
-1795446750.197913
+1795450453.742427
 5
-1795446750.265044
+1795450453.978975
 $ redis-cli XINFO GROUPS poc:events
 name
 proj-mongo
@@ -22,9 +22,9 @@ consumers
 pending
 0
 last-delivered-id
-1795360701150-0
+1795364500858-1
 entries-read
-2258
+2299
 lag
 0
 name
@@ -34,9 +34,9 @@ consumers
 pending
 0
 last-delivered-id
-1795360701150-0
+1795364500858-1
 entries-read
-2258
+2299
 lag
 0
 name
@@ -46,14 +46,14 @@ consumers
 pending
 0
 last-delivered-id
-1795360701150-0
+1795364500858-1
 entries-read
-2258
+2299
 lag
 0
 $ redis-cli XLEN poc:events
-2258
-$ redis-cli --scan --pattern 'session:*' | wc -l
+2299
+$ redis-cli --scan --pattern "session:*" | wc -l
 7
 $ redis-cli TTL <one session key>
-3444
+3280

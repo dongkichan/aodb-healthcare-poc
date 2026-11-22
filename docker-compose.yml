@@ -14,8 +14,10 @@ x-app-env: &app-env
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:?run ./scripts/init-env.sh first}
   REDIS_URL: redis://redis:6379/0
   JWT_SECRET: ${JWT_SECRET:?run ./scripts/init-env.sh first}
-  POC_DEV_TOKENS: "1"        # dev-only sign-in endpoint; production uses OpenID Connect
-  POC_FAULT_INJECTION: "1"   # lets the tests force a failure inside a transaction
+  # Off unless .env turns them on (scripts/init-env.sh does, for local use only). Never expose
+  # port 8000 beyond localhost while POC_DEV_TOKENS is on: it signs anyone in as any handle.
+  POC_DEV_TOKENS: ${POC_DEV_TOKENS:-0}          # dev-only sign-in; production uses OpenID Connect
+  POC_FAULT_INJECTION: ${POC_FAULT_INJECTION:-0} # lets the tests force a failure inside a transaction
 
 services:
   postgres:
@@ -110,13 +112,14 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "worker.main"]
+    restart: unless-stopped
     environment:
       <<: *app-env
       PG_WORKER_DSN: postgresql://worker_rw:${WORKER_DB_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
     depends_on:
       seed: {condition: service_completed_successfully}
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, redis; redis.Redis.from_url(os.environ['REDIS_URL']).get('worker:heartbeat') or exit(1)"]
+      test: ["CMD", "python", "-c", "import os, redis; r = redis.Redis.from_url(os.environ['REDIS_URL']); exit(0 if all(r.exists('worker:alive:' + n) for n in ('relay', 'proj-mongo', 'proj-neo4j', 'proj-redis')) else 1)"]
       interval: 3s
       timeout: 5s
       retries: 40

@@ -62,7 +62,8 @@ END $$;
 -- managers (their assigned clients) and the DPO (all clients) may read it.
 ALTER TABLE audit_event ENABLE ROW LEVEL SECURITY;
 CREATE POLICY audit_append ON audit_event FOR INSERT
-  WITH CHECK (actor_id = app_user_id() AND client_id = ANY ((SELECT app_user_clients())::int[]));
+  WITH CHECK (actor_id = app_user_id() AND actor_role = (SELECT app_role())
+              AND client_id = ANY ((SELECT app_user_clients())::int[]));
 CREATE POLICY audit_read ON audit_event FOR SELECT
   USING ((SELECT app_role()) = 'dpo'
          OR ((SELECT app_role()) IN ('manager', 'team_lead') AND client_id = ANY ((SELECT app_user_clients())::int[])));
@@ -73,7 +74,7 @@ RESET ROLE;
 -- to users, roles, or assignments.
 GRANT USAGE ON SCHEMA poc TO app_rw;
 GRANT SELECT ON poc.client, poc.workflow_type, poc.guidance_chunk TO app_rw;
-GRANT SELECT, INSERT, UPDATE ON poc.request TO app_rw;
+GRANT SELECT, INSERT, UPDATE (status, outcome) ON poc.request TO app_rw;
 GRANT SELECT, INSERT ON poc.request_event, poc.review_decision, poc.client_action TO app_rw;
 GRANT SELECT, INSERT ON poc.outbox_event TO app_rw;
 GRANT SELECT, INSERT ON poc.audit_event TO app_rw;
@@ -95,5 +96,7 @@ CREATE POLICY worker_read ON workflow_type FOR SELECT TO worker_rw USING (true);
 CREATE POLICY worker_read ON guidance_chunk FOR SELECT TO worker_rw USING (true);
 RESET ROLE;
 GRANT USAGE ON SCHEMA poc TO worker_rw;
-GRANT SELECT ON poc.outbox_event, poc.request, poc.client, poc.workflow_type, poc.guidance_chunk TO worker_rw;
+-- Column-level read on request: the worker never sees summaries, client references, or outcomes.
+GRANT SELECT (request_id, client_id, workflow_type_id, status, due_at) ON poc.request TO worker_rw;
+GRANT SELECT ON poc.outbox_event, poc.client, poc.workflow_type, poc.guidance_chunk TO worker_rw;
 GRANT UPDATE (published_at) ON poc.outbox_event TO worker_rw;

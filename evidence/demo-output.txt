@@ -3,57 +3,57 @@
            {"handle": "staff-a", "role": "staff", "clients": ["CL-01", "CL-02"]}
 
 === Step 2. Register a request: Neo4j rules -> PostgreSQL transaction -> MongoDB work package ===
-   staff-a POST /requests -> 201 (145 ms)
-           {"request_id": 1011, "status": "open", "required_fields": ["callback_confirmed", "client_reference", "requested_window"], "missing_fields": [], "work_package_id": "WP-001011", "timings_ms": {"neo4j": 79.96, "postgres": 38.02, "mongodb": 15.97}}
-  PostgreSQL request row: (1011, 1, 'DEMO-9e384d', 'open')
-  MongoDB work package:   {'_id': 'WP-001011', 'fields': {'client_reference': 'DEMO-9e384d', 'requested_window': 'AM', 'callback_confirmed': True}, 'version': 1, 'status': 'in_progress'}
+   staff-a POST /requests -> 201 (77 ms)
+           {"request_id": 1025, "status": "open", "required_fields": ["callback_confirmed", "client_reference", "requested_window"], "missing_fields": [], "work_package_id": "WP-001025", "timings_ms": {"neo4j": 30.76, "postgres": 29.11, "mongodb": 7.55}}
+  PostgreSQL request row: (1025, 1, 'DEMO-62fbba', 'open')
+  MongoDB work package:   {'_id': 'WP-001025', 'fields': {'client_reference': 'DEMO-62fbba', 'requested_window': 'AM', 'callback_confirmed': True}, 'status': 'in_progress', 'version': 1}
 
 === Step 3. A missing required field holds the request (Neo4j rule for this client) ===
-   staff-a POST /requests -> 201 (38 ms)
+   staff-a POST /requests -> 201 (25 ms)
            {"status": "held", "missing_fields": ["callback_confirmed"]}
 
 === Step 4. Guidance search: client-filtered vector search in pgvector + graph expansion in Neo4j ===
-   staff-a GET /guidance/search -> 200 (249 ms)
+   staff-a GET /guidance/search -> 200 (256 ms)
   GD-0101#s1     CL-01 distance 0.300  Before moving an appointment, confirm the callback number with the cal
   GG-0101-0083#s4 CL-01 distance 0.359  Confirm a same-day change at the end of the shift and tell the caller 
   GG-0101-0054#s3 CL-01 distance 0.378  Note a same-day change at the end of the shift and tell the caller wha
   GG-0101-0032#s4 CL-01 distance 0.384  Hold the request until you confirm a same-day change at the end of the
   GG-0101-0096#s1 CL-01 distance 0.395  Note a same-day change when the caller asks and tell the caller what h
            {"required_fields": ["callback_confirmed", "client_reference", "requested_window"], "roles": ["client_coordinator", "staff", "team_lead"], "referenced_sections": ["GD-0101#s2", "GD-0101#s3"]}
-           {"embed": 147.64, "pgvector": 37.66, "neo4j": 12.96, "mongodb": 1.63}
+           {"embed": 189.07, "pgvector": 14.8, "neo4j": 20.37, "mongodb": 5.11}
 
 === Step 5. Another client's data: refused at the gateway, and invisible in the database ===
-   staff-b GET /requests -> 403 (3 ms)
-  as staff-b (CL-01 only), CL-03 rows visible: 0   (rows that exist: 10)
+   staff-b GET /requests -> 403 (2 ms)
+  as staff-b (CL-01 only), CL-03 rows visible: 0   (rows that exist: 12)
 
 === Step 6. Draft, then review by someone else (self-review is refused) ===
-   staff-a POST /requests/1011/drafts -> 201 (94 ms)
-  draft DR-001011-12067d cites ['GD-0101#s1', 'GG-0101-0083#s4', 'GG-0101-0054#s3']
-   staff-a POST /drafts/DR-001011-12067d/review -> 403 (9 ms)
-   staff-b POST /drafts/DR-001011-12067d/review -> 200 (34 ms)
+   staff-a POST /requests/1025/drafts -> 201 (96 ms)
+  draft DR-001025-e5330b cites ['GD-0101#s1', 'GG-0101-0083#s4', 'GG-0101-0054#s3']
+   staff-a POST /drafts/DR-001025-e5330b/review -> 403 (5 ms)
+   staff-b POST /drafts/DR-001025-e5330b/review -> 200 (29 ms)
            {"decision": "accepted", "status": "approved"}
 
 === Step 7. Complete: status, outcome, client action, audit, and outbox in one transaction ===
-   staff-a POST /requests/1011/complete -> 200 (24 ms)
-   staff-a POST /requests/1011/complete -> 200 (10 ms)
+   staff-a POST /requests/1025/complete -> 200 (13 ms)
+   staff-a POST /requests/1025/complete -> 200 (5 ms)
            {"status": "completed", "replayed": true}
 
 === Step 8. Audit trail: staff refused, manager allowed, DPO checks the hash chain ===
-   staff-a GET /audit -> 403 (6 ms)
- manager-1 GET /audit -> 200 (24 ms)
-  #3179   15:18:20.575 staff-a  create   request:1011  fields=['external_ref', 'summary', 'status']
-  #3181   15:18:21.027 staff-a  draft    request:1011/draft:DR-001011-12067d  fields=['status']
-  #3182   15:18:21.067 staff-b  review   request:1011/draft:DR-001011-12067d  fields=['status', 'decision']
-  #3183   15:18:21.101 staff-a  complete request:1011  fields=['status', 'outcome']
-     dpo-1 GET /audit/verify -> 200 (66 ms)
-           {"ok": true, "events_checked": 3184, "first_bad_event": null}
-  superuser edits event #3181 -> chain ok: False, first broken event: #3182   (rolled back)
+   staff-a GET /audit -> 403 (2 ms)
+ manager-1 GET /audit -> 200 (8 ms)
+  #3221   16:21:40.340 staff-a  create   request:1025  fields=['external_ref', 'summary', 'status']
+  #3223   16:21:40.780 staff-a  draft    request:1025/draft:DR-001025-e5330b  fields=['status']
+  #3224   16:21:40.808 staff-b  review   request:1025/draft:DR-001025-e5330b  fields=['status', 'decision']
+  #3225   16:21:40.829 staff-a  complete request:1025  fields=['status', 'outcome']
+     dpo-1 GET /audit/verify -> 200 (40 ms)
+           {"ok": true, "events_checked": 3226, "first_bad_event": null}
+  superuser edits event #3223 -> chain ok: False, first broken event: #3224   (rolled back)
 
 === Step 9. Outbox -> Redis stream -> projections in MongoDB, Neo4j, and the Redis queue ===
   Neo4j Request node:      {'status': 'completed', 'client': 'CL-01', 'type': 'appointment_change'}
   MongoDB work package:    status = completed
-  Redis status cache:      {'oid': '2257', 'status': 'completed'}
-  Redis queue CL-01:       request 1011 still queued? False
+  Redis status cache:      {'oid': '2301', 'status': 'completed'}
+  Redis queue CL-01:       request 1025 still queued? False
   Stream consumer groups:  proj-mongo (pending 0, lag 0), proj-neo4j (pending 0, lag 0), proj-redis (pending 0, lag 0)
 
 Demo complete.

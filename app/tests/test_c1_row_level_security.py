@@ -4,9 +4,13 @@ Claimed in the data architecture (relational model) and the access-control secti
 only if the app role does not own the tables, cannot bypass row security, and sets the user
 per transaction, so a pooled connection never carries one user's setting to another.
 """
+import os
 from concurrent.futures import ThreadPoolExecutor
 
+from psycopg_pool import ConnectionPool
+
 from conftest import as_user, auth, create_request
+from seed.data import user_uuid
 
 CLIENT_TABLES = ["client", "workflow_type", "request", "request_event", "review_decision",
                  "client_action", "outbox_event", "guidance_chunk", "audit_event"]
@@ -73,7 +77,9 @@ def test_session_setting_would_leak_to_the_next_transaction(api, app_conn):
     assert leaked > 0
 
 
-def test_concurrent_users_on_one_pool_never_mix(api):
+def test_concurrent_users_each_see_their_own_queue(api):
+    """API-level check under concurrency. It cannot detect a leaked setting on its own, because every
+    API transaction sets the user first; test_user_tx_setting_does_not_reach_the_next_borrower does."""
     assert create_request(api, "staff-b", "CL-01").status_code == 201
     assert create_request(api, "staff-c", "CL-03").status_code == 201
     calls = [("staff-b", "CL-01"), ("staff-c", "CL-03")] * 30
@@ -94,3 +100,22 @@ def test_concurrent_users_on_one_pool_never_mix(api):
 def test_unassigned_role_has_no_request_access(api):
     r = api.get("/requests", params={"client": "CL-01"}, headers=auth(api, "custodian-1"))
     assert r.status_code == 403
+
+
+def test_user_tx_setting_does_not_reach_the_next_borrower(api):
+    """Exercises the API's own user_tx on a pool with one connection: after a user's transaction,
+    the next borrower of that same connection must see no user and no rows."""
+    from poc_api import stores
+    assert create_request(api, "staff-a", "CL-01").status_code == 201
+    pool = ConnectionPool(os.environ["PG_DSN"], min_size=1, max_size=1, open=True, kwargs={"prepare_threshold": None})
+    original = stores.pg_pool
+    stores.pg_pool = lambda: pool
+    try:
+        with stores.user_tx(user_uuid("staff-a")) as conn:
+            assert conn.execute("SELECT count(*) FROM poc.request").fetchone()[0] > 0
+        with pool.connection() as conn:
+            assert conn.execute("SELECT app_user_id()").fetchone()[0] is None
+            assert conn.execute("SELECT count(*) FROM poc.request").fetchone()[0] == 0
+    finally:
+        stores.pg_pool = original
+        pool.close()

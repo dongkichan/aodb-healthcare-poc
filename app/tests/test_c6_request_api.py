@@ -8,7 +8,7 @@ def test_create_request_writes_three_stores(api, admin, mongo):
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["status"] == "open" and body["missing_fields"] == []
-    assert set(body["timings_ms"]) == {"neo4j", "postgres", "mongodb"}
+    assert set(body["timings_ms"]) == {"neo4j", "postgres", "mongodb"} and body["work_package_written"] is True
     rid = body["request_id"]
     assert admin.execute("SELECT status FROM poc.request WHERE request_id = %s", [rid]).fetchone()[0] == "open"
     assert admin.execute("SELECT count(*) FROM poc.outbox_event WHERE aggregate_id = %s::text", [rid]).fetchone()[0] == 1
@@ -40,4 +40,9 @@ def test_unknown_workflow_is_rejected(api):
     r = api.post("/requests", headers=auth(api, "staff-a"),
                  json={"client": "CL-01", "workflow": "billing_dispute", "external_ref": new_ref(),
                        "summary": "x", "fields": {}})
+    assert r.status_code == 422
+
+
+def test_unknown_status_filter_is_rejected(api):
+    r = api.get("/requests", params={"client": "CL-01", "status": "x" * 500}, headers=auth(api, "staff-a"))
     assert r.status_code == 422

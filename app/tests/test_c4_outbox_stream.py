@@ -77,6 +77,21 @@ def test_duplicate_and_older_events_change_nothing(api, admin, graph, mongo, rds
     assert rds.zscore(QUEUE, rid) is None
 
 
+def test_one_late_older_event_changes_nothing(api, admin, graph, mongo, rds):
+    rid = approved_request(api)
+    complete(api, rid)
+    drain(admin, rds)
+    created = next(f for _, f in rds.xrevrange(STREAM, count=5000)
+                   if json.loads(f["payload"])["request_id"] == rid and f["type"] == "request.created")
+    before = {g: int(rds.get(f"metrics:skipped:{g}") or 0) for g in ("proj-neo4j", "proj-redis")}
+    rds.xadd(STREAM, created)
+    drain(admin, rds)
+    assert {g: int(rds.get(f"metrics:skipped:{g}") or 0) - before[g] for g in before} == {"proj-neo4j": 1, "proj-redis": 1}
+    assert node_status(graph, rid) == "completed"
+    assert mongo.work_packages.find_one({"request_id": rid})["status"] == "completed"
+    assert rds.zscore(QUEUE, rid) is None and rds.hget(f"req:{rid}:status", "status") == "completed"
+
+
 def _open_ids(admin):
     return {r[0] for r in admin.execute(
         "SELECT r.request_id FROM poc.request r JOIN poc.workflow_type w USING (workflow_type_id) "

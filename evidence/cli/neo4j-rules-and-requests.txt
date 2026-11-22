@@ -1,27 +1,23 @@
-$ cypher-shell "MATCH (c:Client {code: 'CL-01'})-[:USES]->(w:WorkflowType)-[:REQUIRES]->(f:RequiredField) RETURN w.name, collect(f.name)"
+$ cypher-shell --format plain "MATCH (:Client {code: 'CL-01'})-[:USES]->(w:WorkflowType)-[:REQUIRES]->(f:RequiredField) RETURN w.name AS workflow, collect(f.name) AS required_fields ORDER BY workflow"
 workflow, required_fields
 "appointment_change", ["client_reference", "requested_window", "callback_confirmed"]
 "records_request", ["client_reference", "requester_type", "delivery_method", "consent_on_file"]
 "referral_follow_up", ["client_reference", "referral_type", "follow_up_date"]
-
-$ cypher-shell "MATCH (r:Role)-[:MAY_PERFORM]->(:WorkflowType {id: 'CL-01/appointment_change'}) RETURN collect(r.code)"
+$ cypher-shell --format plain "MATCH (r:Role)-[:MAY_PERFORM]->(:WorkflowType {id: 'CL-01/appointment_change'}) RETURN collect(r.code) AS roles"
 roles
 ["staff", "team_lead", "client_coordinator"]
-
-$ cypher-shell "MATCH p = (:GuidanceSection {id: 'GD-0101#s1'})-[:REFERS_TO*1..2]->(:GuidanceSection) RETURN ..."
+$ cypher-shell --format plain "MATCH p = (g:GuidanceSection {id: 'GD-0101#s1'})-[:REFERS_TO*1..2]->(g2:GuidanceSection) RETURN g.id AS start, length(p) AS hops, g2.id AS reaches"
 start, hops, reaches
 "GD-0101#s1", 1, "GD-0101#s2"
 "GD-0101#s1", 2, "GD-0101#s3"
-
-$ cypher-shell "MATCH (r:Request {id: 1011})-[:OF_TYPE]->(w) RETURN r, w.id"
+$ cypher-shell --format plain "MATCH (r:Request {id: 1025})-[:OF_TYPE]->(w) RETURN r.id AS id, r.client AS client, r.type AS type, r.status AS status, r.outcome AS outcome, w.id AS workflow"
 id, client, type, status, outcome, workflow
-1011, "CL-01", "appointment_change", "completed", "completed", "CL-01/appointment_change"
-
-$ cypher-shell "MATCH (n) RETURN labels(n)[0] AS label, count(*) ORDER BY label"
+1025, "CL-01", "appointment_change", "completed", "completed", "CL-01/appointment_change"
+$ cypher-shell --format plain "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS nodes ORDER BY label"
 label, nodes
 "Client", 3
 "GuidanceSection", 10000
-"Request", 1010
+"Request", 1024
 "RequiredField", 10
 "Role", 3
 "Staff", 8

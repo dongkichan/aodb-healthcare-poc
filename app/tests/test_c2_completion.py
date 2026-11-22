@@ -2,6 +2,8 @@
 and it is refused without an accepted review decision."""
 import uuid
 
+import pytest
+
 from conftest import approved_request, auth, create_request
 
 
@@ -43,9 +45,10 @@ def test_completion_commits_all_rows_together(api, admin):
     assert _counts(admin, rid) == ("completed", 1, 1, 1, 1)
 
 
-def test_failure_inside_the_transaction_leaves_nothing(api, admin):
+@pytest.mark.parametrize("fault", ["after_audit", "before_commit"])
+def test_failure_inside_the_transaction_leaves_nothing(api, admin, fault):
     rid = approved_request(api)
-    r = _complete(api, rid, fault="after_audit")
+    r = _complete(api, rid, fault=fault)
     assert r.status_code == 500
     assert _counts(admin, rid) == ("approved", 0, 0, 0, 0)
     ok, _, first_bad = admin.execute("SELECT * FROM poc.audit_verify()").fetchone()
@@ -64,3 +67,23 @@ def test_retry_with_same_key_is_not_repeated(api, admin):
 def test_team_lead_cannot_complete(api):
     rid = approved_request(api)
     assert _complete(api, rid, handle="lead-a").status_code == 403
+
+
+def test_rejected_draft_cannot_be_accepted_later(api):
+    rid = create_request(api, "staff-a", "CL-01").json()["request_id"]
+    d1 = api.post(f"/requests/{rid}/drafts", headers=auth(api, "staff-a")).json()["draft_id"]
+    r = api.post(f"/drafts/{d1}/review", json={"decision": "rejected", "reason": "wrong slot"}, headers=auth(api, "staff-b"))
+    assert r.status_code == 200 and r.json()["status"] == "open"
+    d2 = api.post(f"/requests/{rid}/drafts", headers=auth(api, "staff-a")).json()["draft_id"]
+    late = api.post(f"/drafts/{d1}/review", json={"decision": "accepted", "reason": "late"}, headers=auth(api, "staff-b"))
+    assert late.status_code == 409
+    ok = api.post(f"/drafts/{d2}/review", json={"decision": "accepted", "reason": "fixed"}, headers=auth(api, "staff-b"))
+    assert ok.status_code == 200 and ok.json()["status"] == "approved"
+
+
+def test_key_used_on_another_clients_request_is_refused_cleanly(api):
+    key = uuid.uuid4().hex
+    assert _complete(api, approved_request(api), key=key).status_code == 200
+    other = approved_request(api, preparer="staff-c", reviewer="lead-c", client="CL-03")
+    r = _complete(api, other, handle="staff-c", key=key)
+    assert r.status_code == 409

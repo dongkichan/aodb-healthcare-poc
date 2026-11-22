@@ -2,7 +2,7 @@
 client's, and the one- or two-hop graph expansion adds the rules that apply."""
 import pytest
 
-from conftest import auth, create_request
+from conftest import auth, create_request, new_ref
 
 CASES = [("staff-a", "CL-01"), ("staff-a", "CL-02"), ("staff-c", "CL-03")]
 
@@ -19,6 +19,8 @@ def test_results_come_only_from_the_requests_client(api, handle, client):
     body = _search(api, handle, client)
     assert body["results"], "no passages returned"
     assert {p["client"] for p in body["results"]} == {client}
+    # The label comes from the passage row; the section ID carries its client's number independently.
+    assert all(p["section_id"][3:5] == client[-2:] for p in body["results"])
     assert {p["workflow"] for p in body["results"]} == {"appointment_change"}
 
 
@@ -41,15 +43,21 @@ def test_graph_expansion_adds_rules_for_this_client(api):
     assert g["referenced_sections"] and all(s.startswith("GD-01") for s in g["referenced_sections"])
 
 
-def test_misfiled_request_still_gets_five_passages(api):
-    """A request filed under one workflow whose text is about another. The nearest passages overall
-    then belong to the other workflow, so a filtered HNSW scan without iterative scans can come back
-    short or empty (pgvector README, "Filtering")."""
-    body = {"client": "CL-01", "workflow": "appointment_change", "external_ref": __import__("conftest").new_ref(),
+def _misfiled(api):
+    body = {"client": "CL-01", "workflow": "appointment_change", "external_ref": new_ref(),
             "summary": "Requester wants a copy of visit records through the portal; consent form not on file.",
             "fields": {"client_reference": "REF-7", "requested_window": "AM", "callback_confirmed": True}}
-    rid = api.post("/requests", json=body, headers=auth(api, "staff-a")).json()["request_id"]
-    r = api.get("/guidance/search", params={"request": rid}, headers=auth(api, "staff-a"))
+    return api.post("/requests", json=body, headers=auth(api, "staff-a")).json()["request_id"]
+
+
+@pytest.mark.parametrize("mode", ["default", "hnsw_iterative"])
+def test_misfiled_request_still_gets_five_passages(api, mode):
+    """A request filed under one workflow whose text is about another. The nearest passages overall
+    then belong to the other workflow, so a filtered HNSW scan without iterative scans can return
+    fewer than five, or none (pgvector README, "Filtering"). hnsw_iterative forces the index path,
+    so this case is exercised at any corpus size; default is the API's own setting."""
+    rid = _misfiled(api)
+    r = api.get("/guidance/search", params={"request": rid, "mode": mode}, headers=auth(api, "staff-a"))
     assert r.status_code == 200
     results = r.json()["results"]
     assert len(results) == 5

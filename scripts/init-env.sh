@@ -14,6 +14,9 @@ rand() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1"; }
   echo "WORKER_DB_PASSWORD=$(rand 24)"  # generated per machine; pragma: allowlist secret
   echo "NEO4J_PASSWORD=$(rand 24)"  # generated per machine; pragma: allowlist secret
   echo "JWT_SECRET=$(rand 48)"
+  echo "# Local development only: the dev sign-in endpoint and the test fault switch."
+  echo "POC_DEV_TOKENS=1"
+  echo "POC_FAULT_INJECTION=1"
 } > .env
 chmod 600 .env
 echo "Wrote .env with random local values."
