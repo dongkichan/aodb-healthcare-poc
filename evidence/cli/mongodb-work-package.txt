@@ -1,0 +1,39 @@
+$ mongosh poc --eval 'db.work_packages.findOne({request_id: 1011})'
+{
+  _id: 'WP-001011',
+  request_id: 1011,
+  client_code: 'CL-01',
+  workflow: 'appointment_change',
+  fields: {
+    client_reference: 'DEMO-9e384d',
+    requested_window: 'AM',
+    callback_confirmed: true
+  },
+  missing_fields: [],
+  guidance_refs: [],
+  version: 1,
+  status: 'completed',
+  last_outbox_id: 2257
+}
+$ mongosh poc --eval 'db.drafts.findOne({request_id: 1011}, {text: 0})'
+{
+  _id: 'DR-001011-12067d',
+  request_id: 1011,
+  client_code: 'CL-01',
+  prepared_by: '30467189-b2d7-5703-9aa7-af71ef76f712',
+  sources: [
+    {
+      section_id: 'GD-0101#s1',
+      version: 1
+    },
+    {
+      section_id: 'GG-0101-0083#s4',
+      version: 1
+    },
+    {
+      section_id: 'GG-0101-0054#s3',
+      version: 1
+    }
+  ],
+  status: 'accepted'
+}

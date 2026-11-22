@@ -1,0 +1,26 @@
+Query text: 'consent form is not on file' (a records question), filtered to CL-01 + appointment_change
+Corpus: 10,000 passages. Login: app_rw (row-level security on). Index: HNSW, vector_cosine_ops.
+
+-- plain HNSW (iterative scans off, as first designed)
+$ EXPLAIN (ANALYZE) SELECT section_id FROM guidance_chunk WHERE client_id = 1 AND workflow_type = 'appointment_change' ORDER BY embedding <=> $query LIMIT 5
+   Limit (actual rows=0 loops=1)
+     InitPlan 1
+       ->  Result (never executed)
+     ->  Index Scan using guidance_chunk_hnsw on guidance_chunk (actual rows=0 loops=1)
+           Order By: (embedding <=> <query embedding>)
+           Filter: ((client_id = 1) AND (workflow_type = 'appointment_change'::text) AND <row-level security>)
+           Rows Removed by Filter: 57
+   Planning Time: 0.997 ms
+   Execution Time: 15.767 ms
+
+-- HNSW with hnsw.iterative_scan = strict_order (the API default)
+$ EXPLAIN (ANALYZE) SELECT section_id FROM guidance_chunk WHERE client_id = 1 AND workflow_type = 'appointment_change' ORDER BY embedding <=> $query LIMIT 5
+   Limit (actual rows=5 loops=1)
+     InitPlan 1
+       ->  Result (actual rows=1 loops=1)
+     ->  Index Scan using guidance_chunk_hnsw on guidance_chunk (actual rows=5 loops=1)
+           Order By: (embedding <=> <query embedding>)
+           Filter: ((client_id = 1) AND (workflow_type = 'appointment_change'::text) AND <row-level security>)
+           Rows Removed by Filter: 798
+   Planning Time: 0.051 ms
+   Execution Time: 90.851 ms

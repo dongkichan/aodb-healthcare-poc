@@ -1,0 +1,618 @@
+{
+  "info": {
+    "name": "AODB proof of concept",
+    "description": "Synthetic data only. Run the requests in order.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Sign in as staff-a",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"handle\": \"staff-a\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('tokenStaffA', pm.response.json().access_token);",
+              "pm.test('signed in', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sign in as staff-b",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"handle\": \"staff-b\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('tokenStaffB', pm.response.json().access_token);",
+              "pm.test('signed in', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sign in as manager-1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"handle\": \"manager-1\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('tokenManager', pm.response.json().access_token);",
+              "pm.test('signed in', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sign in as dpo-1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"handle\": \"dpo-1\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('tokenDpo', pm.response.json().access_token);",
+              "pm.test('signed in', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Create request (CL-01)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/requests",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "requests"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client\": \"CL-01\",\n  \"workflow\": \"appointment_change\",\n  \"external_ref\": \"PM-{{$timestamp}}\",\n  \"summary\": \"Caller asked to move the visit to a morning slot and confirm by phone.\",\n  \"fields\": {\n    \"client_reference\": \"PM-REF\",\n    \"requested_window\": \"AM\",\n    \"callback_confirmed\": true\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('requestId', pm.response.json().request_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Guidance search",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/guidance/search?request={{requestId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guidance",
+            "search"
+          ],
+          "query": [
+            {
+              "key": "request",
+              "value": "{{requestId}}"
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('five passages', () => pm.expect(pm.response.json().results.length).to.eql(5));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Another client's queue (expect 403)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/requests?client=CL-03",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "requests"
+          ],
+          "query": [
+            {
+              "key": "client",
+              "value": "CL-03"
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffB}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Draft",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/requests/{{requestId}}/drafts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "requests",
+            "{{requestId}}",
+            "drafts"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('draftId', pm.response.json().draft_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Self-review (expect 403)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/drafts/{{draftId}}/review",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "drafts",
+            "{{draftId}}",
+            "review"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"decision\": \"accepted\",\n  \"reason\": \"self\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Review by another staff member",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/drafts/{{draftId}}/review",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "drafts",
+            "{{draftId}}",
+            "review"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffB}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"decision\": \"accepted\",\n  \"reason\": \"matches guidance\"\n}"
+        }
+      }
+    },
+    {
+      "name": "7. Complete",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/requests/{{requestId}}/complete",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "requests",
+            "{{requestId}}",
+            "complete"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"outcome\": \"slot moved and confirmed\",\n  \"idempotency_key\": \"pm-{{requestId}}-key\"\n}"
+        }
+      }
+    },
+    {
+      "name": "8. Audit trail as staff (expect 403)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/audit?request={{requestId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit"
+          ],
+          "query": [
+            {
+              "key": "request",
+              "value": "{{requestId}}"
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenStaffA}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Audit trail as manager",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/audit?request={{requestId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit"
+          ],
+          "query": [
+            {
+              "key": "request",
+              "value": "{{requestId}}"
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenManager}}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10. Verify the hash chain (DPO)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/audit/verify",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit",
+            "verify"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{tokenDpo}}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "tokenStaffA",
+      "value": ""
+    },
+    {
+      "key": "tokenStaffB",
+      "value": ""
+    },
+    {
+      "key": "tokenManager",
+      "value": ""
+    },
+    {
+      "key": "tokenDpo",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    },
+    {
+      "key": "draftId",
+      "value": ""
+    }
+  ]
+}

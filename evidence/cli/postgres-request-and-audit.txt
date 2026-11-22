@@ -1,0 +1,30 @@
+$ psql -c "SELECT ... FROM poc.request WHERE request_id = 1011"
+ request_id | client_id | external_ref |  status   |         outcome          
+------------+-----------+--------------+-----------+--------------------------
+       1011 |         1 | DEMO-9e384d  | completed | slot moved and confirmed
+(1 row)
+
+$ psql -c "SELECT ... FROM poc.request_event WHERE request_id = 1011"
+ event_id | from_status | to_status |  actor  |      at      
+----------+-------------+-----------+---------+--------------
+     2255 |             | open      | staff-a | 15:18:20.543
+     2257 | open        | in_review | staff-a | 15:18:20.949
+     2258 | in_review   | approved  | staff-b | 15:18:21.053
+     2259 | approved    | completed | staff-a | 15:18:21.085
+(4 rows)
+
+$ psql -c "SELECT ... FROM poc.audit_event WHERE object_ref LIKE 'request:1011%'"
+ audit_id | actor_role |  action  |             object_ref              |      prev_hash      
+----------+------------+----------+-------------------------------------+---------------------
+     3179 | staff      | create   | request:1011                        | b17f864a58e69a05...
+     3181 | staff      | draft    | request:1011/draft:DR-001011-12067d | e8eaaf12340469f6...
+     3182 | staff      | review   | request:1011/draft:DR-001011-12067d | dc2fd37812413a78...
+     3183 | staff      | complete | request:1011                        | e72993b64574a5a0...
+(4 rows)
+
+$ psql -c "SELECT * FROM poc.audit_verify()"
+ ok | checked | first_bad 
+----+---------+-----------
+ t  |    3184 |          
+(1 row)
+

@@ -1,0 +1,59 @@
+$ redis-cli HGETALL req:1011:status
+oid
+2257
+status
+completed
+$ redis-cli ZRANGE queue:CL-01:appointment_change 0 4 WITHSCORES
+1
+1795446748.384765
+2
+1795446749.975331
+3
+1795446750.092221
+4
+1795446750.197913
+5
+1795446750.265044
+$ redis-cli XINFO GROUPS poc:events
+name
+proj-mongo
+consumers
+1
+pending
+0
+last-delivered-id
+1795360701150-0
+entries-read
+2258
+lag
+0
+name
+proj-neo4j
+consumers
+1
+pending
+0
+last-delivered-id
+1795360701150-0
+entries-read
+2258
+lag
+0
+name
+proj-redis
+consumers
+1
+pending
+0
+last-delivered-id
+1795360701150-0
+entries-read
+2258
+lag
+0
+$ redis-cli XLEN poc:events
+2258
+$ redis-cli --scan --pattern 'session:*' | wc -l
+7
+$ redis-cli TTL <one session key>
+3444

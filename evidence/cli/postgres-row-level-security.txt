@@ -1,0 +1,29 @@
+$ psql -U postgres   (superuser: bypasses row-level security)
+ client | requests 
+--------+----------
+ CL-01  |      994
+ CL-02  |        6
+ CL-03  |       10
+(3 rows)
+
+$ psql -U app_rw     (the API login), signed in as staff-b (assigned CL-01 only)
+BEGIN
+ user_set 
+----------
+ t
+(1 row)
+
+ client | requests 
+--------+----------
+ CL-01  |      994
+(1 row)
+
+COMMIT
+$ psql -U app_rw     (no user set)
+ requests_visible 
+------------------
+                0
+(1 row)
+
+$ psql -U app_rw -c "DELETE FROM audit_event"
+ERROR:  permission denied for table audit_event

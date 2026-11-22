@@ -1,0 +1,59 @@
+
+=== Step 1. Sign in (simulated identity provider): role and clients come from PostgreSQL ===
+           {"handle": "staff-a", "role": "staff", "clients": ["CL-01", "CL-02"]}
+
+=== Step 2. Register a request: Neo4j rules -> PostgreSQL transaction -> MongoDB work package ===
+   staff-a POST /requests -> 201 (145 ms)
+           {"request_id": 1011, "status": "open", "required_fields": ["callback_confirmed", "client_reference", "requested_window"], "missing_fields": [], "work_package_id": "WP-001011", "timings_ms": {"neo4j": 79.96, "postgres": 38.02, "mongodb": 15.97}}
+  PostgreSQL request row: (1011, 1, 'DEMO-9e384d', 'open')
+  MongoDB work package:   {'_id': 'WP-001011', 'fields': {'client_reference': 'DEMO-9e384d', 'requested_window': 'AM', 'callback_confirmed': True}, 'version': 1, 'status': 'in_progress'}
+
+=== Step 3. A missing required field holds the request (Neo4j rule for this client) ===
+   staff-a POST /requests -> 201 (38 ms)
+           {"status": "held", "missing_fields": ["callback_confirmed"]}
+
+=== Step 4. Guidance search: client-filtered vector search in pgvector + graph expansion in Neo4j ===
+   staff-a GET /guidance/search -> 200 (249 ms)
+  GD-0101#s1     CL-01 distance 0.300  Before moving an appointment, confirm the callback number with the cal
+  GG-0101-0083#s4 CL-01 distance 0.359  Confirm a same-day change at the end of the shift and tell the caller 
+  GG-0101-0054#s3 CL-01 distance 0.378  Note a same-day change at the end of the shift and tell the caller wha
+  GG-0101-0032#s4 CL-01 distance 0.384  Hold the request until you confirm a same-day change at the end of the
+  GG-0101-0096#s1 CL-01 distance 0.395  Note a same-day change when the caller asks and tell the caller what h
+           {"required_fields": ["callback_confirmed", "client_reference", "requested_window"], "roles": ["client_coordinator", "staff", "team_lead"], "referenced_sections": ["GD-0101#s2", "GD-0101#s3"]}
+           {"embed": 147.64, "pgvector": 37.66, "neo4j": 12.96, "mongodb": 1.63}
+
+=== Step 5. Another client's data: refused at the gateway, and invisible in the database ===
+   staff-b GET /requests -> 403 (3 ms)
+  as staff-b (CL-01 only), CL-03 rows visible: 0   (rows that exist: 10)
+
+=== Step 6. Draft, then review by someone else (self-review is refused) ===
+   staff-a POST /requests/1011/drafts -> 201 (94 ms)
+  draft DR-001011-12067d cites ['GD-0101#s1', 'GG-0101-0083#s4', 'GG-0101-0054#s3']
+   staff-a POST /drafts/DR-001011-12067d/review -> 403 (9 ms)
+   staff-b POST /drafts/DR-001011-12067d/review -> 200 (34 ms)
+           {"decision": "accepted", "status": "approved"}
+
+=== Step 7. Complete: status, outcome, client action, audit, and outbox in one transaction ===
+   staff-a POST /requests/1011/complete -> 200 (24 ms)
+   staff-a POST /requests/1011/complete -> 200 (10 ms)
+           {"status": "completed", "replayed": true}
+
+=== Step 8. Audit trail: staff refused, manager allowed, DPO checks the hash chain ===
+   staff-a GET /audit -> 403 (6 ms)
+ manager-1 GET /audit -> 200 (24 ms)
+  #3179   15:18:20.575 staff-a  create   request:1011  fields=['external_ref', 'summary', 'status']
+  #3181   15:18:21.027 staff-a  draft    request:1011/draft:DR-001011-12067d  fields=['status']
+  #3182   15:18:21.067 staff-b  review   request:1011/draft:DR-001011-12067d  fields=['status', 'decision']
+  #3183   15:18:21.101 staff-a  complete request:1011  fields=['status', 'outcome']
+     dpo-1 GET /audit/verify -> 200 (66 ms)
+           {"ok": true, "events_checked": 3184, "first_bad_event": null}
+  superuser edits event #3181 -> chain ok: False, first broken event: #3182   (rolled back)
+
+=== Step 9. Outbox -> Redis stream -> projections in MongoDB, Neo4j, and the Redis queue ===
+  Neo4j Request node:      {'status': 'completed', 'client': 'CL-01', 'type': 'appointment_change'}
+  MongoDB work package:    status = completed
+  Redis status cache:      {'oid': '2257', 'status': 'completed'}
+  Redis queue CL-01:       request 1011 still queued? False
+  Stream consumer groups:  proj-mongo (pending 0, lag 0), proj-neo4j (pending 0, lag 0), proj-redis (pending 0, lag 0)
+
+Demo complete.
