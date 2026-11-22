@@ -13,8 +13,9 @@ CLIENT_TABLES = ["client", "workflow_type", "request", "request_event", "review_
 
 
 def test_app_login_is_not_owner_and_cannot_bypass(admin):
-    sup, bypass = admin.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'app_rw'").fetchone()
-    assert (sup, bypass) == (False, False)
+    for login in ("app_rw", "worker_rw"):
+        sup, bypass = admin.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = %s", [login]).fetchone()
+        assert (sup, bypass) == (False, False)
     rows = admin.execute("SELECT c.relname, pg_get_userbyid(c.relowner), c.relrowsecurity FROM pg_class c "
                          "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'poc' AND c.relkind = 'r'").fetchall()
     owners = {name: owner for name, owner, _ in rows}

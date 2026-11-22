@@ -83,3 +83,17 @@ REVOKE ALL ON FUNCTION poc.app_user_id(), poc.app_role(), poc.app_user_clients()
   poc.user_id_for_handle(text), poc.handle_of(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION poc.app_user_id(), poc.app_role(), poc.app_user_clients(), poc.app_user_client_codes(),
   poc.user_id_for_handle(text), poc.handle_of(uuid) TO app_rw;
+
+-- The outbox relay and the projections work across clients. Instead of BYPASSRLS, worker_rw gets
+-- its own read policies, and the only value it may change is outbox_event.published_at.
+SET ROLE poc_owner;
+SET search_path = poc, public;
+CREATE POLICY worker_relay ON outbox_event TO worker_rw USING (true) WITH CHECK (true);
+CREATE POLICY worker_read ON request FOR SELECT TO worker_rw USING (true);
+CREATE POLICY worker_read ON client FOR SELECT TO worker_rw USING (true);
+CREATE POLICY worker_read ON workflow_type FOR SELECT TO worker_rw USING (true);
+CREATE POLICY worker_read ON guidance_chunk FOR SELECT TO worker_rw USING (true);
+RESET ROLE;
+GRANT USAGE ON SCHEMA poc TO worker_rw;
+GRANT SELECT ON poc.outbox_event, poc.request, poc.client, poc.workflow_type, poc.guidance_chunk TO worker_rw;
+GRANT UPDATE (published_at) ON poc.outbox_event TO worker_rw;

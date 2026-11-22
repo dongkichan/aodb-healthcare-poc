@@ -45,9 +45,15 @@ def write_audit(conn, user: User, client_id: int, action: str, object_ref: str, 
                  "VALUES (%s, %s, %s, %s, %s, %s)", [user.user_id, user.role, client_id, action, object_ref, changed])
 
 
-def write_outbox(conn, client_id: int, aggregate_id, event_type: str, payload: dict) -> None:
-    conn.execute("INSERT INTO outbox_event (client_id, aggregate_id, event_type, payload) VALUES (%s, %s, %s, %s)",
-                 [client_id, str(aggregate_id), event_type, Jsonb(payload)])
+def write_outbox(conn, rid: int, event_type: str) -> None:
+    """Outbox row in the same transaction as the change. The payload carries IDs, codes, status,
+    and due time only, never request content."""
+    client_id, payload = conn.execute(
+        "SELECT r.client_id, json_build_object('request_id', r.request_id, 'client', c.name_code, 'workflow', w.name, "
+        "'status', r.status, 'due', extract(epoch FROM r.due_at)) FROM request r JOIN client c USING (client_id) "
+        "JOIN workflow_type w USING (workflow_type_id) WHERE r.request_id = %s", [rid]).fetchone()
+    conn.execute("INSERT INTO outbox_event (client_id, aggregate_id, event_type, payload, created_at) "
+                 "VALUES (%s, %s, %s, %s, clock_timestamp())", [client_id, str(rid), event_type, Jsonb(payload)])
 
 
 def write_status(conn, rid: int, client_id: int, old: Optional[str], new: str, user: User) -> None:
@@ -124,8 +130,7 @@ def create_request(body: NewRequest, user: User = Depends(current_user)):
                 [client_id, wf_id, body.external_ref, body.summary, status, user.user_id, hours]).fetchone()[0]
             write_status(conn, rid, client_id, None, status, user)
             write_audit(conn, user, client_id, "create", f"request:{rid}", ["external_ref", "summary", "status"])
-            write_outbox(conn, client_id, rid, "request.created",
-                         {"request_id": rid, "client": body.client, "workflow": body.workflow, "status": status})
+            write_outbox(conn, rid, "request.created")
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "this client reference already has an open request")
     timings["postgres"] = ms(t0)
@@ -273,7 +278,7 @@ def create_draft(rid: int, user: User = Depends(current_user)):
         conn.execute("UPDATE request SET status = 'in_review' WHERE request_id = %s", [rid])
         write_status(conn, rid, client_id, "open", "in_review", user)
         write_audit(conn, user, client_id, "draft", f"request:{rid}/draft:{draft_id}", ["status"])
-        write_outbox(conn, client_id, rid, "request.in_review", {"request_id": rid, "status": "in_review"})
+        write_outbox(conn, rid, "request.in_review")
         mongo_db().drafts.insert_one({"_id": draft_id, "request_id": rid, "client_code": found["client"],
                                       "prepared_by": user.user_id, "sources": sources, "text": text,
                                       "status": "proposed"})
@@ -307,7 +312,7 @@ def review_draft(draft_id: str, body: Review, user: User = Depends(current_user)
         conn.execute("UPDATE request SET status = %s WHERE request_id = %s", [new, rid])
         write_status(conn, rid, client_id, status, new, user)
         write_audit(conn, user, client_id, "review", f"request:{rid}/draft:{draft_id}", ["status", "decision"])
-        write_outbox(conn, client_id, rid, "request.reviewed", {"request_id": rid, "status": new})
+        write_outbox(conn, rid, "request.reviewed")
     mongo_db().drafts.update_one({"_id": draft_id}, {"$set": {"status": body.decision}})
     return {"draft_id": draft_id, "request_id": rid, "decision": body.decision, "status": new}
 
@@ -348,7 +353,7 @@ def complete_request(rid: int, body: Completion, user: User = Depends(current_us
         write_status(conn, rid, client_id, "approved", "completed", user)
         write_audit(conn, user, client_id, "complete", f"request:{rid}", ["status", "outcome"])
         maybe_fail("after_audit", x_poc_fault)
-        write_outbox(conn, client_id, rid, "request.completed", {"request_id": rid, "status": "completed"})
+        write_outbox(conn, rid, "request.completed")
         maybe_fail("before_commit", x_poc_fault)
     return {"request_id": rid, "status": "completed", "replayed": False}
 

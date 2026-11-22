@@ -25,6 +25,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?run ./scripts/init-env.sh first}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?run ./scripts/init-env.sh first}
     volumes:
       - ./db/postgres:/docker-entrypoint-initdb.d:ro
       - pgdata:/var/lib/postgresql/data
@@ -106,6 +107,20 @@ services:
       retries: 60
       start_period: 10s
 
+  worker:
+    <<: *app
+    command: ["python", "-m", "worker.main"]
+    environment:
+      <<: *app-env
+      PG_WORKER_DSN: postgresql://worker_rw:${WORKER_DB_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+    depends_on:
+      seed: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, redis; redis.Redis.from_url(os.environ['REDIS_URL']).get('worker:heartbeat') or exit(1)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
   tests:
     <<: *app
     profiles: ["test"]
@@ -114,8 +129,10 @@ services:
       <<: *app-env
       PG_ADMIN_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
       API_URL: http://api:8000
+      PG_WORKER_DSN: postgresql://worker_rw:${WORKER_DB_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
     depends_on:
       api: {condition: service_healthy}
+      worker: {condition: service_healthy}
 
 volumes:
   pgdata:
