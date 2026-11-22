@@ -1,0 +1,123 @@
+# Proof of concept: healthcare administrative support platform (synthetic data only).
+# Start:  ./scripts/init-env.sh && docker compose up -d --build --wait
+# Test:   docker compose run --rm tests
+name: aodb-poc
+
+x-app: &app
+  build: ./app
+  image: aodb-poc-app:local
+
+x-app-env: &app-env
+  PG_DSN: postgresql://app_rw:${APP_DB_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+  MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
+  NEO4J_URL: bolt://neo4j:7687
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?run ./scripts/init-env.sh first}
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:?run ./scripts/init-env.sh first}
+  POC_DEV_TOKENS: "1"        # dev-only sign-in endpoint; production uses OpenID Connect
+  POC_FAULT_INJECTION: "1"   # lets the tests force a failure inside a transaction
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    environment:
+      POSTGRES_DB: poc
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?run ./scripts/init-env.sh first}
+    volumes:
+      - ./db/postgres:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d poc"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  mongo:
+    image: mongo:8.0.38
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      # Starts the single-member replica set on first run, then reports healthy once writable,
+      # so "majority" write concern works.
+      test: ["CMD", "mongosh", "--quiet", "--eval",
+             "try { rs.status() } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }; quit(db.hello().isWritablePrimary ? 0 : 1)"]
+      interval: 3s
+      timeout: 10s
+      retries: 60
+      start_period: 5s
+
+  neo4j:
+    image: neo4j:5.26.33-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?run ./scripts/init-env.sh first}
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    ports:
+      - "127.0.0.1:7474:7474"   # Neo4j Browser, for the graph screenshots
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 10s
+
+  redis:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  seed:
+    <<: *app
+    command: ["python", "-m", "seed.load"]
+    environment:
+      <<: *app-env
+      PG_ADMIN_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+      GUIDANCE_TOTAL: ${GUIDANCE_TOTAL:-1000}
+    depends_on:
+      postgres: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["uvicorn", "poc_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      seed: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  tests:
+    <<: *app
+    profiles: ["test"]
+    command: ["pytest", "-q", "-rA"]
+    environment:
+      <<: *app-env
+      PG_ADMIN_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
+
+volumes:
+  pgdata:
+  mongodata:
+  neo4jdata:
