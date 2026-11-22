@@ -134,6 +134,23 @@ services:
       api: {condition: service_healthy}
       worker: {condition: service_healthy}
 
+  bench:
+    <<: *app
+    profiles: ["bench"]
+    command: ["python", "-m", "bench.bench", "run"]
+    environment:
+      <<: *app-env
+      PG_ADMIN_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+      PG_WORKER_DSN: postgresql://worker_rw:${WORKER_DB_PASSWORD:?run ./scripts/init-env.sh first}@postgres:5432/poc
+      API_URL: http://api:8000
+      EVIDENCE_DIR: /srv/evidence
+      HOST_HARDWARE: ${HOST_HARDWARE:-not recorded}
+    volumes:
+      - ./evidence:/srv/evidence
+    depends_on:
+      api: {condition: service_healthy}
+      worker: {condition: service_healthy}
+
 volumes:
   pgdata:
   mongodata:

@@ -26,7 +26,11 @@ FAULTS = os.environ.get("POC_FAULT_INJECTION") == "1"
 @app.on_event("startup")
 def warm_up() -> None:
     embedder().encode("warm up")  # load the embedding model before the first request
-SEARCH_MODES = ("default", "exact", "hnsw", "hnsw_iterative")
+# default: the planner chooses, with pgvector iterative index scans on, so a filtered HNSW scan keeps
+# reading the index until it has enough rows for the client and workflow.
+# planner: the planner chooses, iterative scans off (the search as first designed).
+# exact / hnsw / hnsw_iterative: force one access path, for the measurements.
+SEARCH_MODES = ("default", "planner", "exact", "hnsw", "hnsw_iterative")
 
 
 def ms(t0: float) -> float:
@@ -199,7 +203,7 @@ def run_search(conn, rid: int, mode: str = "default", k: int = 5) -> dict:
         conn.execute("SET LOCAL enable_indexscan = off")
     elif mode in ("hnsw", "hnsw_iterative"):
         conn.execute("SET LOCAL enable_seqscan = off")
-    if mode == "hnsw_iterative":
+    if mode in ("default", "hnsw_iterative"):
         conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
     rows = conn.execute(
         "SELECT section_id, guidance_id, version, workflow_type, embedding <=> %s AS distance FROM guidance_chunk "

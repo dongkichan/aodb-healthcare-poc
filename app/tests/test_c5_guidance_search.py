@@ -39,3 +39,18 @@ def test_graph_expansion_adds_rules_for_this_client(api):
     assert set(g["required_fields"]) == {"client_reference", "requested_window", "callback_confirmed"}
     assert "staff" in g["roles"]
     assert g["referenced_sections"] and all(s.startswith("GD-01") for s in g["referenced_sections"])
+
+
+def test_misfiled_request_still_gets_five_passages(api):
+    """A request filed under one workflow whose text is about another. The nearest passages overall
+    then belong to the other workflow, so a filtered HNSW scan without iterative scans can come back
+    short or empty (pgvector README, "Filtering")."""
+    body = {"client": "CL-01", "workflow": "appointment_change", "external_ref": __import__("conftest").new_ref(),
+            "summary": "Requester wants a copy of visit records through the portal; consent form not on file.",
+            "fields": {"client_reference": "REF-7", "requested_window": "AM", "callback_confirmed": True}}
+    rid = api.post("/requests", json=body, headers=auth(api, "staff-a")).json()["request_id"]
+    r = api.get("/guidance/search", params={"request": rid}, headers=auth(api, "staff-a"))
+    assert r.status_code == 200
+    results = r.json()["results"]
+    assert len(results) == 5
+    assert {p["client"] for p in results} == {"CL-01"} and {p["workflow"] for p in results} == {"appointment_change"}

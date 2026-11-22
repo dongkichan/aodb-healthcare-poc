@@ -18,7 +18,10 @@ def _configure(conn):
 @lru_cache
 def pg_pool() -> ConnectionPool:
     # The API logs in as app_rw only: not the table owner and unable to bypass row-level security.
-    return ConnectionPool(os.environ["PG_DSN"], min_size=2, max_size=10, configure=_configure, open=True)
+    # prepare_threshold=None: no automatic server-side prepared statements. A cached generic plan
+    # ignores per-transaction planner settings, so every search is planned for its own parameters.
+    return ConnectionPool(os.environ["PG_DSN"], min_size=2, max_size=10, configure=_configure, open=True,
+                          kwargs={"prepare_threshold": None})
 
 
 @contextmanager

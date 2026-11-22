@@ -1,0 +1,1 @@
+SEED {"guidance_total": 1000, "passages_embedded_now": 1000, "embedding_seconds": 13.34, "guidance_chunks": 1000, "guidance_documents": 108, "graph_nodes": 1033, "seed_seconds": 23.93}
